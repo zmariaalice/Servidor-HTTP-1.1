@@ -1,90 +1,77 @@
 import socket
 import threading
-import time
 import os
-import datetime
-import queue
+import time
 
-# Função para lidar com uma conexão de cliente
-def serve_client(client_socket, base_dir):
-    # Define o timeout para 20 segundos
-    client_socket.settimeout(20)
+HOST = '0.0.0.0'  
+PORT = 8080
+BASE_DIR = './page'
+TIMEOUT = 20
+
+# Status HTTP 
+HTTP_STATUS_CODES = {
+    200: 'OK',
+    404: 'Not Found',
+    502: 'Bad Gateway'
+}
+
+# LOGS dos requests
+def log_request(client_address, request, status_code):
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    log_entry = f'{timestamp} - {client_address} - [{request}] - {status_code}\n'
+    with open('server_log.txt', 'a') as log_file:
+        log_file.write(log_entry)
+
+
+def handle_client(client_socket, client_address):
+    request_data = client_socket.recv(1024).decode('utf-8')
     
-    # Parse da requisição HTTP
-    request = client_socket.recv(1024)
-    request_str = request.decode('utf-8')
-    request_parts = request_str.split()
-    
-    # Obtenha o endereço IP do cliente
-    client_ip = client_socket.getpeername()[0]
-    
-    # Verifica se a requisição possui o método GET
-    if len(request_parts) >= 2 and request_parts[0] == 'GET':
-        file_path = os.path.join(base_dir, request_parts[1][1:])
-        
-        try:
-            with open(file_path, 'rb') as file:
-                content = file.read()
-            
-            # Envia a resposta com sucesso (200 OK)
-            response = f"HTTP/1.1 200 OK\r\nContent-Length: {len(content)}\r\n\r\n"
-            client_socket.send(response.encode('utf-8') + content)
-            
-            # Registra um log de sucesso
-            log_entry = f"{datetime.datetime.now()} - {client_ip} - [{request_str}] - 200 OK\n"
-            log_queue.put(log_entry)
-        
-        except FileNotFoundError:
-            # Arquivo não encontrado (404 Not Found)
-            response = "HTTP/1.1 404 Not Found\r\n\r\n"
-            client_socket.send(response.encode('utf-8'))
-            
-            # Registra um log de erro
-            log_entry = f"{datetime.datetime.now()} - {client_ip} - [{request_str}] - 404 Not Found\n"
-            log_queue.put(log_entry)
-    
+    if request_data:
+        request_lines = request_data.split('\n')
+        request_line = request_lines[0].strip().split()
+
+        if len(request_line) >= 3:
+            method, path, _ = request_line
+            file_path = os.path.join(BASE_DIR, path.lstrip('/'))
+            print(file_path)
+            if method == 'GET':
+                if os.path.exists(file_path) and os.path.isfile(file_path):
+                    status_code = 200
+                    response_body = open(file_path, 'rb').read()
+                else:
+                    status_code = 404
+                    response_body = b'File Not Found'
+            elif method in ('POST', 'DELETE'):
+                status_code = 502
+                response_body = b'Invalid Function'
+            else:
+                status_code = 501
+                response_body = b'Not Implemented'
+        else:
+            status_code = 400
+            response_body = b'Bad Request'
     else:
-        # Método HTTP não suportado (502 Bad Gateway)
-        response = "HTTP/1.1 502 Bad Gateway\r\n\r\n"
-        client_socket.send(response.encode('utf-8'))
-        
-        # Registra um log de erro
-        log_entry = f"{datetime.datetime.now()} - {client_ip} - [{request_str}] - 502 Bad Gateway\n"
-        log_queue.put(log_entry)
+        status_code = 400
+        response_body = b'Bad Request'
     
-    # Fecha o socket do cliente
+    response_headers = f'HTTP/1.1 {status_code} {HTTP_STATUS_CODES.get(status_code, "Unknown")}\r\n'
+    response_headers += 'Content-Type: text/html\r\n'
+    response_headers += f'Content-Length: {len(response_body)}\r\n\r\n'
+
+    response = response_headers.encode('utf-8') + response_body
+    client_socket.send(response)
     client_socket.close()
 
-# Função para registrar logs em uma thread exclusiva
-def log_worker(log_file):
-    while True:
-        log_entry = log_queue.get()
-        with open(log_file, 'a') as log:
-            log.write(log_entry)
-        log_queue.task_done()
+    log_request(client_address, request_line, status_code)
 
-def main():
-    base_dir = '/temp'  # Substitua pelo diretório base desejado
-    log_file = 'server.log'
-    
-    # Inicia a thread de registro de log
-    log_thread = threading.Thread(target=log_worker, args=(log_file,))
-    log_thread.daemon = True
-    log_thread.start()
-    
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(('0.0.0.0', 8080))
-    server.listen(5)
-    print(f"[*] Servidor HTTP 1.1 iniciado na porta 8080, servindo arquivos de {base_dir}")
-    
-    while True:
-        client_socket, addr = server.accept()
-        print(f"[*] Aceitando conexão de {addr[0]}:{addr[1]}")
-        
-        # Inicia uma nova thread para lidar com a conexão
-        client_handler = threading.Thread(target=serve_client, args=(client_socket, base_dir))
-        client_handler.start()
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server_socket.bind((HOST, PORT))
+server_socket.listen(5)
+print(f'Servidor HTTP rodando em http://localhost:{PORT}/')
 
-if __name__ == '__main__':
-    log_queue = queue.Queue()
-    main()
+while True:
+    client_socket, addr = server_socket.accept()
+    client_socket.settimeout(TIMEOUT)
+    client_handler = threading.Thread(target=handle_client, args=(client_socket, addr))
+    client_handler.start()

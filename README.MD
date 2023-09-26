@@ -43,3 +43,20 @@ Este guia simples descreve como instalar o Python. O Python é uma linguagem de 
 
     ```bash
     python --version
+
+## Para rodar o projeto
+
+1. Basta rodar
+
+    ```bash
+    python3 app.py
+
+2. Acessar o localhost:8080
+
+    ```bash
+    resposta desejada: File Not Found (400)
+3. Verificar o arquivo server.log
+
+4. Acessar o localhost:8080/index.html
+    ```bash
+    resposta desejada: File Not Found (200)
